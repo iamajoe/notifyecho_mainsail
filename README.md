@@ -199,14 +199,17 @@ Moonraker's database namespace `notifyecho`.
 
 ## Development
 
+Requires Python 3.9+ and `just`.
+
 ```sh
-python3 -m unittest discover -s tests -v
-ruff check .
+just test     # unit + integration tests
+just lint     # ruff, compile, JS, bash and shellcheck (when available)
+just build    # smoke-test the installer + dist/notifyecho_mainsail.tar.gz
+just check    # lint + test
 ```
 
-CI runs on both GitHub and Codeberg across Python 3.9, 3.11 and 3.13:
-Ruff lint, Python compile, the full unit/integration suite, JavaScript syntax
-checking, shell syntax checks and ShellCheck.
+Run `just --list` for all recipes. CI runs the same checks on GitHub and
+Codeberg across Python 3.9, 3.11 and 3.13.
 
 Layout:
 
