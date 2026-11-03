@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NotifyEcho · Mainsail</title>
+    <link rel="stylesheet" href="/server/notifyecho/static/style.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div>
+          <h1>NotifyEcho</h1>
+          <p class="subtitle">Klipper print notifications from Moonraker</p>
+        </div>
+        <button id="back" class="button ghost" type="button">Back to Mainsail</button>
+      </header>
+
+      <main>
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <h2>Connection</h2>
+              <p class="hint">Use your project's bearer key from NotifyEcho.</p>
+            </div>
+          </div>
+
+          <label class="field">
+            <span>NotifyEcho URL</span>
+            <input id="base-url" type="url" spellcheck="false" placeholder="https://notifyecho.com" />
+          </label>
+
+          <label class="field">
+            <span>Project bearer token</span>
+            <input id="token" type="password" spellcheck="false" autocomplete="off" placeholder="pk_..." />
+          </label>
+
+          <p class="hint">
+            Create the workflows in NotifyEcho first. Each workflow's trigger kind must match the
+            kind shown next to its event below.
+          </p>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <h2>Workflow routing</h2>
+              <p class="hint">
+                Default mode sends every enabled event to one workflow. Advanced mode lets each
+                event use its own workflow ID; blank falls back to the default.
+              </p>
+            </div>
+          </div>
+
+          <label class="check-row">
+            <input id="advanced-mode" type="checkbox" />
+            <span>Advanced mode</span>
+          </label>
+
+          <label class="field">
+            <span>Default workflow ID</span>
+            <input id="default-workflow" type="text" spellcheck="false" placeholder="00000000-0000-0000-0000-000000000000" />
+          </label>
+        </section>
+
+        <section class="card">
+          <div class="section-head">
+            <div>
+              <h2>Events</h2>
+              <p class="hint">Every event is enabled by default. Disable any event you do not want sent.</p>
+            </div>
+            <button id="verify-all" class="button" type="button">Verify all</button>
+          </div>
+
+          <div id="events-list" class="events"></div>
+        </section>
+
+        <section class="card">
+          <div class="actions">
+            <button id="save" class="button primary" type="button">Save</button>
+            <span id="status" class="status" role="status"></span>
+          </div>
+          <p id="last-send" class="hint last-send"></p>
+        </section>
+      </main>
+    </div>
+
+    <script src="/server/notifyecho/static/app.js"></script>
+  </body>
+</html>
