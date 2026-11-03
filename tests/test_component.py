@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import enum
 import pathlib
 import sys
@@ -348,6 +347,180 @@ class ComponentTest(unittest.IsolatedAsyncioTestCase):
             self.server.http.last_post["body"]["content"]["data"]["filename"],
             "notifyecho-test.gcode",
         )
+
+    async def test_static_endpoints_return_assets(self) -> None:
+        ui = await self.component._handle_ui(FakeWebRequest(RequestType.GET, {}))
+        script = await self.component._handle_app_js(FakeWebRequest(RequestType.GET, {}))
+        styles = await self.component._handle_style_css(
+            FakeWebRequest(RequestType.GET, {})
+        )
+
+        self.assertIn("NotifyEcho", ui)
+        self.assertIn("/settings", script)
+        self.assertIn(".event-row", styles)
+
+    async def test_test_endpoint_rejects_unknown_event(self) -> None:
+        with self.assertRaises(ServerError):
+            await self.component._handle_test(
+                FakeWebRequest(RequestType.POST, {"eventKey": "nope"})
+            )
+
+    async def test_test_endpoint_requires_token(self) -> None:
+        self.component.settings = _configured_settings()
+        self.component.settings["token"] = ""
+
+        with self.assertRaises(ServerError):
+            await self.component._handle_test(
+                FakeWebRequest(
+                    RequestType.POST,
+                    {
+                        "eventKey": "print_complete",
+                        "workflowId": "11111111-1111-1111-1111-111111111111",
+                    },
+                )
+            )
+
+    async def test_verify_requires_token(self) -> None:
+        self.component.settings = _configured_settings()
+        self.component.settings["token"] = ""
+
+        with self.assertRaises(ServerError):
+            await self.component._handle_verify(
+                FakeWebRequest(
+                    RequestType.POST,
+                    {"workflowId": "11111111-1111-1111-1111-111111111111"},
+                )
+            )
+
+    async def test_ready_event_schedules_notification(self) -> None:
+        self.component.settings = _configured_settings()
+
+        await self.component._on_klippy_ready()
+        await _run_next_task(self.server)
+
+        self.assertEqual(
+            self.server.http.last_post["body"]["kind"], "klipper.ready"
+        )
+        self.assertTrue(self.server.klippy_apis.subscribed)
+
+    async def test_shutdown_event_schedules_notification(self) -> None:
+        self.component.settings = _configured_settings()
+
+        self.component._on_klippy_shutdown()
+        await _run_next_task(self.server)
+
+        self.assertEqual(
+            self.server.http.last_post["body"]["kind"], "klipper.shutdown"
+        )
+
+    async def test_unexpected_disconnect_schedules_error(self) -> None:
+        self.component.settings = _configured_settings()
+        self.component._klippy_was_ready = True
+
+        self.component._on_klippy_disconnect()
+        await _run_next_task(self.server)
+
+        body = self.server.http.last_post["body"]
+        self.assertEqual(body["kind"], "klipper.error")
+        self.assertEqual(body["metadata"]["errorSource"], "klippy_disconnect")
+
+    async def test_disconnect_after_shutdown_does_not_schedule_error(self) -> None:
+        self.component.settings = _configured_settings()
+        self.component._klippy_was_ready = True
+        self.component._shutdown_seen = True
+
+        self.component._on_klippy_disconnect()
+
+        self.assertEqual(self.server.eventloop.tasks, [])
+
+    async def test_klippy_started_error_schedules_error(self) -> None:
+        self.component.settings = _configured_settings()
+
+        self.component._on_klippy_started(FakeState("error", "config error"))
+        await _run_next_task(self.server)
+
+        body = self.server.http.last_post["body"]
+        self.assertEqual(body["kind"], "klipper.error")
+        self.assertEqual(body["metadata"]["errorSource"], "klippy_startup")
+        self.assertIn("config error", body["content"]["message"])
+
+    async def test_plugin_error_is_throttled(self) -> None:
+        self.component.settings = _configured_settings()
+
+        self.component._report_plugin_error("first")
+        self.component._report_plugin_error("second")
+
+        self.assertEqual(len(self.server.eventloop.tasks), 1)
+
+    async def test_print_started_resets_progress(self) -> None:
+        self.component.settings = _configured_settings()
+        self.component.progress.set_milestones([25])
+        self.component.progress.update(0.5)
+
+        self.component._on_job_state_changed(
+            "started", {}, {"state": "printing", "filename": "part.gcode"}
+        )
+        await _run_next_task(self.server)
+
+        self.assertEqual(self.component.progress.update(0.25), [25])
+
+    async def test_progress_initial_sync_primes_milestones(self) -> None:
+        self.component.settings = _configured_settings()
+        self.component.progress.set_milestones([25, 50, 75])
+        self.component._progress_synced = False
+        self.server.job_state.stats = {"state": "printing", "filename": "part.gcode"}
+
+        self.component._on_virtual_sdcard_update(
+            {"virtual_sdcard": {"progress": 0.50}}, 0.0
+        )
+        self.assertEqual(self.server.eventloop.tasks, [])
+
+        self.component._on_virtual_sdcard_update(
+            {"virtual_sdcard": {"progress": 0.75}}, 0.0
+        )
+        self.assertEqual(len(self.server.eventloop.tasks), 1)
+
+    async def test_dispatch_failure_reports_error_event(self) -> None:
+        self.component.settings = _configured_settings()
+        self.server.http.response = FakeResponse(500, b'{"error":{"message":"boom"}}')
+
+        result = await self.component._dispatch_event(
+            "print_complete",
+            print_stats={"state": "complete", "filename": "part.gcode"},
+        )
+        self.assertFalse(result.ok)
+        await _run_next_task(self.server)
+
+        self.assertEqual(
+            self.server.http.last_post["body"]["kind"], "klipper.error"
+        )
+        self.assertEqual(
+            self.server.http.last_post["body"]["metadata"]["errorSource"], "plugin"
+        )
+
+    async def test_failed_error_event_does_not_recurse(self) -> None:
+        self.component.settings = _configured_settings()
+        self.server.http.response = FakeResponse(500, b"{}")
+
+        result = await self.component._dispatch_event("error")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(self.server.eventloop.tasks, [])
+
+
+class FakeState:
+    def __init__(self, name: str, message: str = "") -> None:
+        self._name = name
+        self.message = message
+
+    def __str__(self) -> str:
+        return self._name
+
+
+async def _run_next_task(server: FakeServer) -> None:
+    if not server.eventloop.tasks:
+        raise AssertionError("Expected a scheduled task")
+    await server.eventloop.tasks.pop(0)
 
 
 def _configured_settings() -> Dict[str, Any]:

@@ -201,7 +201,12 @@ Moonraker's database namespace `notifyecho`.
 
 ```sh
 python3 -m unittest discover -s tests -v
+ruff check .
 ```
+
+CI runs on both GitHub and Codeberg across Python 3.9, 3.11 and 3.13:
+Ruff lint, Python compile, the full unit/integration suite, JavaScript syntax
+checking, shell syntax checks and ShellCheck.
 
 Layout:
 
