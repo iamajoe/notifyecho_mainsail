@@ -7,7 +7,7 @@
 #
 set -Eeuo pipefail
 
-REPO_URL="${NOTIFYECHO_REPO_URL:-https://codeberg.org/iamajoe/notifyecho_mainsail.git}"
+REPO_URL="${NOTIFYECHO_REPO_URL:-https://github.com/iamajoe/notifyecho_mainsail.git}"
 BRANCH="${NOTIFYECHO_BRANCH:-main}"
 INSTALL_DIR="${NOTIFYECHO_INSTALL_DIR:-$HOME/notifyecho_mainsail}"
 DATA_DIR="${NOTIFYECHO_DATA_DIR:-$HOME/printer_data}"

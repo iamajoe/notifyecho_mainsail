@@ -23,13 +23,13 @@ Each configured event sends a normal NotifyEcho request with a
 One-liner:
 
 ```sh
-curl -fsSL https://codeberg.org/iamajoe/notifyecho_mainsail/raw/branch/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/iamajoe/notifyecho_mainsail/main/install.sh | bash
 ```
 
 Or clone and run:
 
 ```sh
-git clone https://codeberg.org/iamajoe/notifyecho_mainsail.git
+git clone https://github.com/iamajoe/notifyecho_mainsail.git
 cd notifyecho_mainsail
 ./install.sh
 ```
@@ -208,8 +208,8 @@ just build    # smoke-test the installer + dist/notifyecho_mainsail.tar.gz
 just check    # lint + test
 ```
 
-Run `just --list` for all recipes. CI runs the same checks on GitHub and
-Codeberg across Python 3.9, 3.11 and 3.13.
+Run `just --list` for all recipes. CI runs the same checks on GitHub across
+Python 3.9, 3.11 and 3.13.
 
 Layout:
 
