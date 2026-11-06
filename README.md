@@ -20,19 +20,28 @@ Each configured event sends a normal NotifyEcho request with a
 
 ## Install
 
-One-liner:
+Install the latest tagged release:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/iamajoe/notifyecho_mainsail/main/install.sh | bash
+curl -fsSL https://github.com/iamajoe/notifyecho_mainsail/releases/latest/download/install.sh | bash
 ```
 
-Or clone and run:
+Install a specific release:
 
 ```sh
-git clone https://github.com/iamajoe/notifyecho_mainsail.git
+curl -fsSL https://github.com/iamajoe/notifyecho_mainsail/releases/download/vX.Y.Z/install.sh | bash
+```
+
+Or clone a tag and run the installer:
+
+```sh
+git clone --branch vX.Y.Z https://github.com/iamajoe/notifyecho_mainsail.git
 cd notifyecho_mainsail
-./install.sh
+./install.sh --tag vX.Y.Z
 ```
+
+Only tagged releases are supported. The installer always checks out a release
+tag; installing or running from `main` is not supported.
 
 Options:
 
@@ -42,14 +51,16 @@ Options:
 
 The installer:
 
-1. Clones/updates the repository at `~/notifyecho_mainsail`.
+1. Clones/updates the repository at `~/notifyecho_mainsail` and checks out the
+   chosen release tag.
 2. Symlinks the component into Moonraker's `components` directory.
 3. Adds `[notifyecho]` and `[update_manager notifyecho]` to `moonraker.conf`.
 4. Adds a **NotifyEcho** entry to `<config>/.theme/navi.json`.
 5. Restarts Moonraker.
 
-No settings are collected on the command line. Everything is configured in the
-UI.
+If `--tag` is omitted, the installer resolves the newest `vX.Y.Z` tag from the
+repository. No settings are collected on the command line; everything is
+configured in the UI.
 
 ## Configure
 
@@ -156,13 +167,20 @@ Workflows can render the event data with `{{content.data.*}}` or
 
 ## Update
 
-Updates are managed by Moonraker's update manager (`channel: dev`). The
-NotifyEcho settings page has an **Updates** card that shows the installed and
-remote versions, whether an update is available, and an **Update** button. This
-is the same update path Mainsail uses under **Machine → Update Manager**.
+Updates are release-to-release and use Moonraker's update manager with
+`channel: stable`. The NotifyEcho settings page has an **Updates** card that
+shows the installed and remote versions, whether an update is available, and an
+**Update** button. This is the same update path Mainsail uses under
+**Machine → Update Manager**.
+
+- Updates are **never automatic**. The user must press **Update**.
+- Only installs checked out at a release tag can be updated. If the install is
+  on a branch or commit, the Update button is disabled and the installer must be
+  re-run from a release tag.
+- Updating pulls the repository to a newer release tag and restarts Moonraker.
 
 NotifyEcho has no runtime dependencies beyond Moonraker and the Python standard
-library. Updating only pulls the repository and restarts Moonraker.
+library.
 
 ## Uninstall
 
@@ -218,11 +236,32 @@ just check    # lint + test
 Run `just --list` for all recipes. CI runs the same checks on GitHub across
 Python 3.9, 3.11 and 3.13.
 
+### Releasing
+
+Releases are published from semver tags. Push a tag and GitHub Actions runs the
+release workflow:
+
+```sh
+git tag -a v0.1.0 -m "v0.1.0"
+git push origin v0.1.0
+```
+
+The workflow validates the tag, runs the tests, builds the archive, and publishes
+a GitHub Release with `install.sh`, `uninstall.sh` and
+`dist/notifyecho_mainsail.tar.gz`. The latest `install.sh` is then available at:
+
+```text
+https://github.com/iamajoe/notifyecho_mainsail/releases/latest/download/install.sh
+```
+
 Layout:
 
 ```
 install.sh
 uninstall.sh
+.github/workflows/
+  ci.yml           lint + test on pull requests and pushes
+  release.yml      publish tagged releases with install.sh
 moonraker_component/notifyecho/
   component.py     Moonraker wiring, events, HTTP endpoints
   settings.py      settings defaults + validation

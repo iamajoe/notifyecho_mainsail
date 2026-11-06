@@ -7,8 +7,9 @@
 #
 set -Eeuo pipefail
 
-REPO_URL="${NOTIFYECHO_REPO_URL:-https://github.com/iamajoe/notifyecho_mainsail.git}"
-BRANCH="${NOTIFYECHO_BRANCH:-main}"
+REPO_URL="https://github.com/iamajoe/notifyecho_mainsail.git"
+BRANCH="main"
+TAG="${NOTIFYECHO_TAG:-}"
 INSTALL_DIR="${NOTIFYECHO_INSTALL_DIR:-$HOME/notifyecho_mainsail}"
 DATA_DIR="${NOTIFYECHO_DATA_DIR:-$HOME/printer_data}"
 CONFIG_FILE="${NOTIFYECHO_CONFIG_FILE:-}"
@@ -26,8 +27,7 @@ Options:
   -d, --data-dir <path>   Moonraker data directory (default: ~/printer_data)
   -c, --config <path>     moonraker.conf path (default: <data-dir>/config/moonraker.conf)
       --install-dir <path> Where to clone the plugin (default: ~/notifyecho_mainsail)
-      --repo-url <url>     Git repository URL
-      --branch <name>      Git branch (default: main)
+      --tag <tag>          Release tag to install (default: latest vX.Y.Z tag)
       --no-restart         Do not restart Moonraker
   -h, --help              Show this help
 EOF
@@ -50,14 +50,9 @@ while [[ $# -gt 0 ]]; do
       INSTALL_DIR="$2"
       shift 2
       ;;
-    --repo-url)
+    --tag)
       [[ $# -ge 2 ]] || die "$1 requires a value"
-      REPO_URL="$2"
-      shift 2
-      ;;
-    --branch)
-      [[ $# -ge 2 ]] || die "$1 requires a value"
-      BRANCH="$2"
+      TAG="$2"
       shift 2
       ;;
     --no-restart)
@@ -76,6 +71,22 @@ done
 
 command -v git >/dev/null 2>&1 || die "git is required."
 command -v python3 >/dev/null 2>&1 || die "python3 is required."
+
+resolve_latest_tag() {
+  git ls-remote --tags --refs --sort=-v:refname "$REPO_URL" 'refs/tags/v*' 2>/dev/null \
+    | sed 's#.*refs/tags/##' \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+    | head -n 1 || true
+}
+
+if [[ -z "$TAG" ]]; then
+  TAG="$(resolve_latest_tag)"
+  [[ -n "$TAG" ]] || die "No release tags found at $REPO_URL. Publish a vX.Y.Z tag first."
+  info "Using latest release tag $TAG"
+fi
+
+[[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+  die "Release tag must look like vX.Y.Z (got: $TAG)."
 
 if [[ -z "$CONFIG_FILE" ]]; then
   CONFIG_FILE="$DATA_DIR/config/moonraker.conf"
@@ -97,12 +108,18 @@ fi
 CONFIG_DIR="$(cd "$(dirname "$CONFIG_FILE")" && pwd)"
 CONFIG_FILE="$CONFIG_DIR/$(basename "$CONFIG_FILE")"
 
+checkout_release_tag() {
+  git -C "$1" fetch --tags --prune origin
+  git -C "$1" checkout -B "$BRANCH" "$TAG"
+  if ! git -C "$1" branch --set-upstream-to "origin/$BRANCH" "$BRANCH" >/dev/null 2>&1; then
+    warn "Could not track origin/$BRANCH; updates may be disabled."
+  fi
+}
+
 install_or_update_repo() {
   if [[ -d "$INSTALL_DIR/.git" ]]; then
-    info "Updating $INSTALL_DIR"
-    git -C "$INSTALL_DIR" fetch --prune origin
-    git -C "$INSTALL_DIR" checkout "$BRANCH"
-    git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH"
+    info "Updating $INSTALL_DIR to $TAG"
+    checkout_release_tag "$INSTALL_DIR"
     return
   fi
 
@@ -111,7 +128,8 @@ install_or_update_repo() {
   fi
 
   info "Cloning $REPO_URL to $INSTALL_DIR"
-  git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+  git clone --no-checkout "$REPO_URL" "$INSTALL_DIR"
+  checkout_release_tag "$INSTALL_DIR"
 }
 
 find_python_components_dir() {
@@ -198,7 +216,7 @@ if grep -qE '^\[update_manager(\]| )' "$CONFIG_FILE"; then
 
 [update_manager notifyecho]
 type: git_repo
-channel: dev
+channel: stable
 path: $INSTALL_DIR
 origin: $REPO_URL
 primary_branch: $BRANCH
@@ -215,7 +233,7 @@ install_dir, repo_url, branch = sys.argv[2:5]
 header = "[update_manager notifyecho]"
 managed = {
     "type": "git_repo",
-    "channel": "dev",
+    "channel": "stable",
     "path": install_dir,
     "origin": repo_url,
     "primary_branch": branch,
@@ -335,4 +353,5 @@ Next steps:
 Config:     $CONFIG_FILE
 Component:  $TARGET
 Repository: $INSTALL_DIR
+Release:    $TAG
 EOF

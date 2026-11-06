@@ -391,7 +391,11 @@ async function refreshUpdateStatus() {
 }
 
 async function runUpdate() {
-  if (!state.update || !state.update.updatable) {
+  if (
+    !state.update ||
+    !state.update.updatable ||
+    state.update.updateAllowed === false
+  ) {
     return;
   }
 
@@ -472,7 +476,10 @@ function renderUpdate() {
 
   els.updateVersion.textContent = update.version ? "· " + update.version : "";
   els.updateDetail.textContent = updateDetail(update);
-  els.updateRun.disabled = Boolean(update.busy) || !update.updatable;
+  els.updateRun.disabled =
+    Boolean(update.busy) ||
+    !update.updatable ||
+    update.updateAllowed === false;
   els.updateRun.textContent = update.busy ? "Updating…" : "Update";
 
   if (!update.valid && update.warnings && update.warnings.length) {
@@ -482,6 +489,16 @@ function renderUpdate() {
 
 function updateDetail(update) {
   const parts = [];
+  if (update.updateAllowed === false) {
+    parts.push(
+      "Installed from a branch or commit. Reinstall from a release tag to enable updates."
+    );
+    if (update.channel) {
+      parts.push("Channel: " + update.channel + ".");
+    }
+    return parts.join(" ");
+  }
+
   if (!update.valid) {
     parts.push("This install cannot be updated automatically.");
   } else if (update.updatable) {

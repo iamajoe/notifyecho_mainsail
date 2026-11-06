@@ -100,13 +100,13 @@ class FakeUpdater:
     def __init__(self, status: Dict[str, Any] = None) -> None:
         self.status = status or {
             "name": "notifyecho",
-            "version": "v0.1.0",
-            "remote_version": "v0.1.1",
+            "version": "v0.1.0-0",
+            "remote_version": "v0.1.1-0",
             "current_hash": "aaaa",
             "remote_hash": "bbbb",
             "commits_behind_count": 1,
             "is_valid": True,
-            "channel": "dev",
+            "channel": "stable",
             "warnings": [],
             "anomalies": [],
         }
@@ -425,6 +425,9 @@ class ComponentTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result["available"])
         self.assertTrue(result["updatable"])
+        self.assertTrue(result["tagged"])
+        self.assertTrue(result["updateAllowed"])
+        self.assertEqual(result["channel"], "stable")
         self.assertEqual(result["commitsBehind"], 1)
 
     async def test_update_status_without_update_manager(self) -> None:
@@ -446,7 +449,7 @@ class ComponentTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["started"])
         self.assertTrue(updater.refreshed)
         self.assertFalse(result["status"]["updatable"])
-        self.assertEqual(result["status"]["version"], "v0.1.1")
+        self.assertEqual(result["status"]["version"], "v0.1.1-0")
 
     async def test_update_starts_background_task(self) -> None:
         updater = FakeUpdater()
@@ -494,6 +497,42 @@ class ComponentTest(unittest.IsolatedAsyncioTestCase):
             await self.component._handle_update(
                 FakeWebRequest(RequestType.POST, {"action": "nope"})
             )
+
+    async def test_update_refused_when_not_on_tag(self) -> None:
+        updater = FakeUpdater()
+        updater.status["version"] = "v0.1.0-5"
+        self.server.update_manager = FakeUpdateManager(updater)
+
+        state = await self.component._handle_update(
+            FakeWebRequest(RequestType.GET, {})
+        )
+        self.assertFalse(state["tagged"])
+        self.assertFalse(state["updateAllowed"])
+        self.assertFalse(state["updatable"])
+
+        with self.assertRaises(ServerError):
+            await self.component._handle_update(
+                FakeWebRequest(RequestType.POST, {"action": "update"})
+            )
+        self.assertEqual(self.server.eventloop.tasks, [])
+
+    async def test_update_refused_on_dev_channel(self) -> None:
+        updater = FakeUpdater()
+        updater.status["channel"] = "dev"
+        self.server.update_manager = FakeUpdateManager(updater)
+
+        state = await self.component._handle_update(
+            FakeWebRequest(RequestType.GET, {})
+        )
+        self.assertTrue(state["tagged"])
+        self.assertFalse(state["updateAllowed"])
+        self.assertFalse(state["updatable"])
+
+        with self.assertRaises(ServerError):
+            await self.component._handle_update(
+                FakeWebRequest(RequestType.POST, {"action": "update"})
+            )
+        self.assertEqual(self.server.eventloop.tasks, [])
 
     async def test_update_requires_update_manager(self) -> None:
         with self.assertRaises(ServerError):

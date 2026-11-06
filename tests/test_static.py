@@ -32,6 +32,7 @@ class StaticAssetsTest(unittest.TestCase):
         self.assertIn("refreshUpdateStatus", script)
         self.assertIn("runUpdate", script)
         self.assertIn("updatePoll", script)
+        self.assertIn("updateAllowed", script)
 
     def test_app_exposes_advanced_routing_and_progress(self) -> None:
         script = (STATIC / "app.js").read_text(encoding="utf-8")

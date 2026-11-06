@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate tag
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must look like vX.Y.Z (got: $GITHUB_REF_NAME)." >&2
+            exit 1
+          fi
+
+      - name: Install linters
+        run: python -m pip install --upgrade pip ruff
+
+      - name: Lint and test
+        run: |
+          ruff check .
+          python -m compileall -q moonraker_component tests
+          python -m unittest discover -s tests -v
+          node --check moonraker_component/notifyecho/static/app.js
+          bash -n install.sh
+          bash -n uninstall.sh
+
+      - name: Build archive
+        run: |
+          python -m unittest tests.test_installer -v
+          rm -rf dist
+          mkdir -p dist/notifyecho_mainsail
+          cp -R install.sh uninstall.sh README.md moonraker_component dist/notifyecho_mainsail/
+          find dist/notifyecho_mainsail -name __pycache__ -type d -prune -exec rm -rf {} +
+          find dist/notifyecho_mainsail -name '*.pyc' -delete
+          tar -czf dist/notifyecho_mainsail.tar.gz -C dist notifyecho_mainsail
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            install.sh
+            uninstall.sh
+            dist/notifyecho_mainsail.tar.gz
+
+      - name: Verify install.sh is attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --json assets \
+            --jq '.assets[].name' | grep -qx "install.sh"

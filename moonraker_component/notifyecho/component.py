@@ -256,6 +256,15 @@ class NotifyEcho:
         if action != "update":
             raise self.server.error("Unknown update action: %s" % action, 400)
 
+        state = self._update_state()
+        if not state.get("updateAllowed"):
+            raise self.server.error(
+                "Update refused: NotifyEcho must be installed from a release "
+                "tag on the stable or beta channel. Re-run install.sh from a "
+                "release tag.",
+                400,
+            )
+
         if self._update_running or self._update_manager_busy(manager):
             raise self.server.error("A NotifyEcho update is already running.", 503)
         if self._is_printing():
@@ -355,7 +364,10 @@ class NotifyEcho:
                 version and remote_version and version != remote_version
             )
         valid = bool(info.get("is_valid", True))
-        if not valid:
+        channel = str(info.get("channel") or "")
+        tagged = bool(version) and version.endswith("-0") and valid
+        update_allowed = tagged and channel in ("stable", "beta")
+        if not valid or not update_allowed:
             updatable = False
 
         return {
@@ -365,7 +377,9 @@ class NotifyEcho:
             "remoteVersion": remote_version,
             "fullVersion": str(info.get("full_version_string") or ""),
             "branch": str(info.get("branch") or ""),
-            "channel": str(info.get("channel") or ""),
+            "channel": channel,
+            "tagged": tagged,
+            "updateAllowed": update_allowed,
             "commitsBehind": commits_behind,
             "updatable": updatable,
             "valid": valid,
