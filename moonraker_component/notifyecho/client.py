@@ -5,6 +5,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, Dict
 
+BASE_URL = "https://notifyecho.com"
 USER_AGENT = "NotifyEcho-Mainsail/0.1"
 
 
@@ -34,12 +35,11 @@ class NotifyEchoClient:
 
     async def send(
         self,
-        base_url: str,
         token: str,
         workflow_id: str,
         payload: Dict[str, Any],
     ) -> SendResult:
-        url = _notify_url(base_url, workflow_id)
+        url = _notify_url(workflow_id)
         headers = {
             "Authorization": "Bearer %s" % token.strip(),
             "Idempotency-Key": uuid.uuid4().hex,
@@ -57,25 +57,26 @@ class NotifyEchoClient:
         except Exception as exc:  # Network failures should not break the event loop.
             return SendResult(False, 0, str(exc), workflow_id=workflow_id)
 
-        body = _decode_body(response.body)
-        if 200 <= response.code < 300:
-            return SendResult(True, response.code, "Accepted", body, workflow_id)
+        body = _decode_body(response.content)
+        if 200 <= response.status_code < 300:
+            return SendResult(
+                True, response.status_code, "Accepted", body, workflow_id
+            )
 
         return SendResult(
             False,
-            response.code,
-            _error_message(body, response.code),
+            response.status_code,
+            _error_message(body, response.status_code),
             body,
             workflow_id,
         )
 
     async def verify(
         self,
-        base_url: str,
         token: str,
         workflow_id: str,
     ) -> VerifyResult:
-        url = _status_url(base_url, workflow_id)
+        url = _status_url(workflow_id)
         headers = {
             "Authorization": "Bearer %s" % token.strip(),
             "User-Agent": USER_AGENT,
@@ -92,8 +93,8 @@ class NotifyEchoClient:
         except Exception as exc:
             return VerifyResult(False, 0, str(exc))
 
-        body = _decode_body(response.body)
-        if response.code == 200:
+        body = _decode_body(response.content)
+        if response.status_code == 200:
             try:
                 data = json.loads(body) if body else {}
             except ValueError:
@@ -108,17 +109,17 @@ class NotifyEchoClient:
 
         return VerifyResult(
             False,
-            response.code,
-            _verify_error_message(response.code, body),
+            response.status_code,
+            _verify_error_message(response.status_code, body),
         )
 
 
-def _notify_url(base_url: str, workflow_id: str) -> str:
-    return "%s/api/notify/%s" % (base_url.rstrip("/"), workflow_id)
+def _notify_url(workflow_id: str) -> str:
+    return "%s/api/notify/%s" % (BASE_URL, workflow_id)
 
 
-def _status_url(base_url: str, workflow_id: str) -> str:
-    return "%s/api/notify/%s/status" % (base_url.rstrip("/"), workflow_id)
+def _status_url(workflow_id: str) -> str:
+    return "%s/api/notify/%s/status" % (BASE_URL, workflow_id)
 
 
 def _decode_body(body: Any) -> str:

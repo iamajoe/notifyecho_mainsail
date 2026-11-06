@@ -26,11 +26,6 @@
           </div>
 
           <label class="field">
-            <span>NotifyEcho URL</span>
-            <input id="base-url" type="url" spellcheck="false" placeholder="https://notifyecho.com" />
-          </label>
-
-          <label class="field">
             <span>Project bearer token</span>
             <input id="token" type="password" spellcheck="false" autocomplete="off" placeholder="pk_..." />
           </label>
@@ -95,7 +90,10 @@
               </div>
               <p id="update-detail" class="event-description"></p>
             </div>
-            <button id="update-run" class="button primary" type="button" disabled>Update</button>
+            <div class="update-actions">
+              <button id="update-force-refresh" class="button" type="button" title="Re-fetch all refs and tags; reinstall if the installed tag moved.">Force refresh</button>
+              <button id="update-run" class="button primary" type="button" disabled>Update</button>
+            </div>
           </div>
           <p id="update-status" class="hint update-status" role="status"></p>
         </section>

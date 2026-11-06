@@ -8,6 +8,10 @@ default:
 test:
     python3 -m unittest discover -s tests -v
 
+# Run the settings UI locally with mocked Moonraker endpoints
+dev port="8000":
+    python3 scripts/dev_server.py --port {{port}}
+
 # Lint Python, JavaScript and shell assets
 lint:
     #!/usr/bin/env bash
@@ -17,7 +21,7 @@ lint:
     else
         echo "ruff not installed; skipping Python lint"
     fi
-    python3 -m compileall -q moonraker_component tests
+    python3 -m compileall -q moonraker_component tests scripts
     if command -v node >/dev/null 2>&1; then
         node --check moonraker_component/notifyecho/static/app.js
     else

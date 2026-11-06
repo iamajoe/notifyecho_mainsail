@@ -345,8 +345,8 @@ NotifyEcho installed.
 
 Next steps:
   1. Open Mainsail.
-  2. Click "NotifyEcho" in the sidebar (position 95).
-  3. Add the NotifyEcho URL, project bearer token and workflow ID(s).
+  2. Click "NotifyEcho" in the sidebar.
+  3. Add the project bearer token and workflow ID(s).
   4. Use "Verify" to confirm each token + workflow combination.
   5. Use "Send test" to send a real test event.
 

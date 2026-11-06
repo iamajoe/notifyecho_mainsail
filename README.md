@@ -67,7 +67,6 @@ configured in the UI.
 1. Open Mainsail.
 2. Click **NotifyEcho** in the sidebar.
 3. Enter:
-   - NotifyEcho URL (default `https://notifyecho.com`)
    - Project bearer token
    - Default workflow ID
 4. Press **Verify** to check the token + workflow combination.
@@ -89,7 +88,7 @@ from going out, disable it.
 The Verify button calls the existing NotifyEcho endpoint:
 
 ```http
-GET {baseUrl}/api/notify/{workflowId}/status
+GET https://notifyecho.com/api/notify/{workflowId}/status
 Authorization: Bearer {token}
 ```
 
@@ -174,6 +173,8 @@ shows the installed and remote versions, whether an update is available, and an
 **Machine → Update Manager**.
 
 - Updates are **never automatic**. The user must press **Update**.
+- **Force refresh** re-fetches all refs and tags. If the installed tag was moved
+  to a new commit, it reinstalls that tag and restarts Moonraker.
 - Only installs checked out at a release tag can be updated. If the install is
   on a branch or commit, the Update button is disabled and the installer must be
   re-run from a release tag.
@@ -227,11 +228,18 @@ Moonraker's database namespace `notifyecho`.
 Requires Python 3.9+ and `just`.
 
 ```sh
+just dev      # settings UI at http://127.0.0.1:8000/server/notifyecho/ui
 just test     # unit + integration tests
 just lint     # ruff, compile, JS, bash and shellcheck (when available)
 just build    # smoke-test the installer + dist/notifyecho_mainsail.tar.gz
 just check    # lint + test
 ```
+
+`just dev` serves the real static assets with an in-memory mock of the
+Moonraker endpoints, so it runs without Klipper, Moonraker, or Mainsail. Pass a
+port with `just dev 8080`. The mock accepts any bearer token except `bad`, and
+verify/test/update actions are simulated. It does not contact NotifyEcho or run
+git updates.
 
 Run `just --list` for all recipes. CI runs the same checks on GitHub across
 Python 3.9, 3.11 and 3.13.
@@ -269,6 +277,8 @@ moonraker_component/notifyecho/
   progress.py      progress milestone tracking
   client.py        NotifyEcho HTTP client
   static/          settings page (no build step)
+scripts/
+  dev_server.py    local frontend preview with mocked endpoints
 tests/
 ```
 

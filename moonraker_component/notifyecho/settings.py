@@ -3,9 +3,7 @@ from __future__ import annotations
 import copy
 import uuid
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-from urllib.parse import urlsplit
 
-DEFAULT_BASE_URL = "https://notifyecho.com"
 DEFAULT_PROGRESS_MILESTONES: Tuple[int, ...] = (25, 50, 75, 90)
 MAX_PROGRESS_MILESTONES = 20
 
@@ -100,7 +98,6 @@ class SettingsError(ValueError):
 
 def default_settings() -> Dict[str, Any]:
     return {
-        "baseUrl": DEFAULT_BASE_URL,
         "token": "",
         "defaultWorkflowId": "",
         "advancedMode": False,
@@ -117,7 +114,6 @@ def normalize_settings(raw: Optional[Any]) -> Dict[str, Any]:
     if not isinstance(raw, dict):
         raise SettingsError("Settings must be an object.")
 
-    base_url = normalize_base_url(raw.get("baseUrl", DEFAULT_BASE_URL))
     token = _as_string(raw.get("token", ""))
     default_workflow = normalize_uuid(
         raw.get("defaultWorkflowId", ""), "Default workflow ID"
@@ -148,26 +144,12 @@ def normalize_settings(raw: Optional[Any]) -> Dict[str, Any]:
         }
 
     return {
-        "baseUrl": base_url,
         "token": token,
         "defaultWorkflowId": default_workflow,
         "advancedMode": advanced_mode,
         "progressMilestones": milestones,
         "events": events,
     }
-
-
-def normalize_base_url(value: Any) -> str:
-    text = _as_string(value).strip()
-    if not text:
-        text = DEFAULT_BASE_URL
-    text = text.rstrip("/")
-    parts = urlsplit(text)
-    if parts.scheme not in ("http", "https") or not parts.netloc:
-        raise SettingsError("NotifyEcho URL must start with http:// or https://.")
-    if parts.query or parts.fragment:
-        raise SettingsError("NotifyEcho URL must not contain a query or fragment.")
-    return text
 
 
 def normalize_uuid(value: Any, label: str) -> str:

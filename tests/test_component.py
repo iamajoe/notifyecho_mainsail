@@ -7,6 +7,7 @@ import sys
 import types
 import unittest
 from typing import Any, Dict, List
+from unittest.mock import AsyncMock, patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "moonraker_component"))
@@ -37,9 +38,11 @@ class ServerError(Exception):
 
 
 class FakeResponse:
+    """Mirrors Moonraker's ``HttpResponse`` (content / status_code)."""
+
     def __init__(self, code: int, body: bytes = b"", error: Any = None) -> None:
-        self.code = code
-        self.body = body
+        self.status_code = code
+        self.content = body
         self.error = error
 
 
@@ -98,6 +101,7 @@ class FakeKlippy:
 
 class FakeUpdater:
     def __init__(self, status: Dict[str, Any] = None) -> None:
+        self.path = pathlib.Path("/tmp/notifyecho")
         self.status = status or {
             "name": "notifyecho",
             "version": "v0.1.0-0",
@@ -112,6 +116,7 @@ class FakeUpdater:
         }
         self.refreshed = False
         self.updated = False
+        self.restarted = False
         self.update_result = True
         self.update_error = None
 
@@ -130,6 +135,9 @@ class FakeUpdater:
             raise self.update_error
         self.updated = True
         return self.update_result
+
+    async def restart_service(self) -> None:
+        self.restarted = True
 
 
 class FakeUpdateManager:
@@ -251,7 +259,6 @@ class ComponentTest(unittest.IsolatedAsyncioTestCase):
 
         await self.component.component_init()
 
-        self.assertEqual(self.component.settings["baseUrl"], "https://notifyecho.com")
         self.assertTrue(self.server.klippy_apis.subscribed)
 
     async def test_endpoints_are_unique(self) -> None:
@@ -273,7 +280,6 @@ class ComponentTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_save_settings_normalizes_and_persists(self) -> None:
         payload = {
-            "baseUrl": "https://example.test/",
             "token": "pk_test",
             "defaultWorkflowId": "11111111-1111-1111-1111-111111111111",
             "advancedMode": True,
@@ -285,7 +291,6 @@ class ComponentTest(unittest.IsolatedAsyncioTestCase):
             FakeWebRequest(RequestType.POST, {"settings": payload})
         )
 
-        self.assertEqual(result["settings"]["baseUrl"], "https://example.test")
         self.assertEqual(result["settings"]["progressMilestones"], [10, 50])
         self.assertFalse(result["settings"]["events"]["print_complete"]["enabled"])
         self.assertIsNotNone(self.server.db.saved)
@@ -295,7 +300,7 @@ class ComponentTest(unittest.IsolatedAsyncioTestCase):
             await self.component._handle_settings(
                 FakeWebRequest(
                     RequestType.POST,
-                    {"settings": {"baseUrl": "not-a-url"}},
+                    {"settings": {"defaultWorkflowId": "not-a-uuid"}},
                 )
             )
 
@@ -308,7 +313,6 @@ class ComponentTest(unittest.IsolatedAsyncioTestCase):
             FakeWebRequest(
                 RequestType.POST,
                 {
-                    "baseUrl": "https://notifyecho.com",
                     "token": "pk_test",
                     "workflowId": "11111111-1111-1111-1111-111111111111",
                 },
@@ -450,6 +454,68 @@ class ComponentTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(updater.refreshed)
         self.assertFalse(result["status"]["updatable"])
         self.assertEqual(result["status"]["version"], "v0.1.1-0")
+
+    async def test_update_force_refresh_refetches_without_reinstall(self) -> None:
+        updater = FakeUpdater()
+        self.server.update_manager = FakeUpdateManager(updater)
+
+        with patch.object(
+            self.component, "_force_refresh_repo", new=AsyncMock(return_value=False)
+        ) as force_refresh:
+            result = await self.component._handle_update(
+                FakeWebRequest(RequestType.POST, {"action": "force_refresh"})
+            )
+
+        force_refresh.assert_awaited_once_with(updater)
+        self.assertFalse(result["started"])
+        self.assertFalse(result["reinstalled"])
+        self.assertTrue(updater.refreshed)
+
+    async def test_update_force_refresh_restarts_when_tag_moved(self) -> None:
+        updater = FakeUpdater()
+        self.server.update_manager = FakeUpdateManager(updater)
+
+        with patch.object(
+            self.component, "_force_refresh_repo", new=AsyncMock(return_value=True)
+        ):
+            result = await self.component._handle_update(
+                FakeWebRequest(RequestType.POST, {"action": "force_refresh"})
+            )
+
+        self.assertTrue(result["started"])
+        self.assertTrue(result["reinstalled"])
+        self.assertTrue(self.component._update_running)
+
+        await _run_next_task(self.server)
+
+        self.assertTrue(updater.restarted)
+        self.assertFalse(self.component._update_running)
+
+    async def test_force_refresh_repo_skips_reset_when_tag_unchanged(self) -> None:
+        updater = FakeUpdater()
+        git = AsyncMock(
+            side_effect=["v0.1.0", "abc123", "", "abc123"]
+        )
+
+        with patch.object(self.component, "_run_git", new=git):
+            reinstalled = await self.component._force_refresh_repo(updater)
+
+        self.assertFalse(reinstalled)
+        calls = [call.args[1:] for call in git.await_args_list]
+        self.assertNotIn(("reset", "--hard", "refs/tags/v0.1.0"), calls)
+
+    async def test_force_refresh_repo_resets_when_tag_moved(self) -> None:
+        updater = FakeUpdater()
+        git = AsyncMock(
+            side_effect=["v0.1.0", "abc123", "", "def456", ""]
+        )
+
+        with patch.object(self.component, "_run_git", new=git):
+            reinstalled = await self.component._force_refresh_repo(updater)
+
+        self.assertTrue(reinstalled)
+        calls = [call.args[1:] for call in git.await_args_list]
+        self.assertIn(("reset", "--hard", "refs/tags/v0.1.0"), calls)
 
     async def test_update_starts_background_task(self) -> None:
         updater = FakeUpdater()

@@ -18,6 +18,7 @@ class StaticAssetsTest(unittest.TestCase):
         self.assertIn('id="verify-all"', html)
         self.assertIn('id="update-run"', html)
         self.assertIn('id="update-refresh"', html)
+        self.assertIn('id="update-force-refresh"', html)
 
     def test_app_calls_component_endpoints(self) -> None:
         script = (STATIC / "app.js").read_text(encoding="utf-8")
@@ -30,6 +31,7 @@ class StaticAssetsTest(unittest.TestCase):
         script = (STATIC / "app.js").read_text(encoding="utf-8")
 
         self.assertIn("refreshUpdateStatus", script)
+        self.assertIn("forceRefreshUpdate", script)
         self.assertIn("runUpdate", script)
         self.assertIn("updatePoll", script)
         self.assertIn("updateAllowed", script)

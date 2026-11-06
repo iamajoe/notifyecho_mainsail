@@ -16,7 +16,6 @@ const state = {
 const els = {};
 
 document.addEventListener("DOMContentLoaded", function () {
-  els.baseUrl = document.getElementById("base-url");
   els.token = document.getElementById("token");
   els.defaultWorkflow = document.getElementById("default-workflow");
   els.advancedMode = document.getElementById("advanced-mode");
@@ -27,6 +26,7 @@ document.addEventListener("DOMContentLoaded", function () {
   els.lastSend = document.getElementById("last-send");
   els.back = document.getElementById("back");
   els.updateRefresh = document.getElementById("update-refresh");
+  els.updateForceRefresh = document.getElementById("update-force-refresh");
   els.updateRun = document.getElementById("update-run");
   els.updateVersion = document.getElementById("update-version");
   els.updateDetail = document.getElementById("update-detail");
@@ -37,9 +37,6 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 
 function bindStaticEvents() {
-  els.baseUrl.addEventListener("input", function () {
-    state.settings.baseUrl = els.baseUrl.value.trim();
-  });
   els.token.addEventListener("input", function () {
     state.settings.token = els.token.value.trim();
   });
@@ -66,6 +63,9 @@ function bindStaticEvents() {
   els.updateRefresh.addEventListener("click", function () {
     void refreshUpdateStatus();
   });
+  els.updateForceRefresh.addEventListener("click", function () {
+    void forceRefreshUpdate();
+  });
   els.updateRun.addEventListener("click", function () {
     void runUpdate();
   });
@@ -89,7 +89,6 @@ function applyData(data) {
   state.lastSend = data.lastSend || null;
   state.milestonesText = (state.settings.progressMilestones || []).join(", ");
 
-  els.baseUrl.value = state.settings.baseUrl || "";
   els.token.value = state.settings.token || "";
   els.defaultWorkflow.value = state.settings.defaultWorkflowId || "";
   els.advancedMode.checked = Boolean(state.settings.advancedMode);
@@ -246,7 +245,6 @@ async function verifyEvent(eventKey, inlineStatus) {
     const result = await api("/verify", {
       method: "POST",
       body: JSON.stringify({
-        baseUrl: state.settings.baseUrl,
         token: state.settings.token,
         workflowId: workflowId,
       }),
@@ -281,7 +279,6 @@ async function sendTest(eventKey, inlineStatus) {
       method: "POST",
       body: JSON.stringify({
         eventKey: eventKey,
-        baseUrl: state.settings.baseUrl,
         token: state.settings.token,
         workflowId: workflowId,
       }),
@@ -324,7 +321,6 @@ async function verifyAll() {
       const result = await api("/verify", {
         method: "POST",
         body: JSON.stringify({
-          baseUrl: state.settings.baseUrl,
           token: state.settings.token,
           workflowId: workflowId,
         }),
@@ -390,6 +386,36 @@ async function refreshUpdateStatus() {
   }
 }
 
+async function forceRefreshUpdate() {
+  els.updateForceRefresh.disabled = true;
+  els.updateRun.disabled = true;
+  setUpdateStatus("Force refreshing repository and tags…", "busy");
+  try {
+    const result = await api("/update", {
+      method: "POST",
+      body: JSON.stringify({ action: "force_refresh" }),
+    });
+    state.update = result.status || state.update;
+    renderUpdate();
+    if (result.reinstalled) {
+      setUpdateStatus(
+        "The installed tag moved to a new commit. Reinstalled; Moonraker is restarting…",
+        "busy"
+      );
+      startUpdatePolling("Force refresh complete.");
+    } else if (state.update && state.update.updatable) {
+      setUpdateStatus("Force refresh complete. An update is available.", "ok");
+    } else if (state.update && state.update.available) {
+      setUpdateStatus("Force refresh complete. NotifyEcho is up to date.", "ok");
+    } else {
+      setUpdateStatus((state.update && state.update.message) || "", "error");
+    }
+  } catch (error) {
+    renderUpdate();
+    setUpdateStatus("Force refresh failed: " + error.message, "error");
+  }
+}
+
 async function runUpdate() {
   if (
     !state.update ||
@@ -419,7 +445,7 @@ async function runUpdate() {
   }
 }
 
-function startUpdatePolling() {
+function startUpdatePolling(completeMessage) {
   stopUpdatePolling();
   let attempts = 0;
   state.updatePoll = window.setInterval(async function () {
@@ -433,7 +459,7 @@ function startUpdatePolling() {
         setUpdateStatus("Update failed: " + data.lastUpdate.message, "error");
       } else if (data.available && !data.busy && !data.updatable) {
         stopUpdatePolling();
-        setUpdateStatus("Update complete.", "ok");
+        setUpdateStatus(completeMessage || "Update complete.", "ok");
       } else {
         setUpdateStatus(
           "Updating… Moonraker will restart when the update finishes.",
@@ -470,12 +496,14 @@ function renderUpdate() {
   if (!update.available) {
     els.updateVersion.textContent = "";
     els.updateDetail.textContent = update.message || "Updates are not available.";
+    els.updateForceRefresh.disabled = true;
     els.updateRun.disabled = true;
     return;
   }
 
   els.updateVersion.textContent = update.version ? "· " + update.version : "";
   els.updateDetail.textContent = updateDetail(update);
+  els.updateForceRefresh.disabled = Boolean(update.busy);
   els.updateRun.disabled =
     Boolean(update.busy) ||
     !update.updatable ||

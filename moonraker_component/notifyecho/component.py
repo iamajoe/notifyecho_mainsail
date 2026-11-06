@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
+import os
 import pathlib
 import time
 from typing import Any, Dict, Optional
@@ -18,7 +20,6 @@ from .settings import (
     default_settings,
     event_catalog,
     is_event_enabled,
-    normalize_base_url,
     normalize_settings,
     normalize_uuid,
     resolve_workflow_id,
@@ -28,6 +29,7 @@ DB_NAMESPACE = "notifyecho"
 DB_KEY = "settings"
 STATIC_DIR = pathlib.Path(__file__).resolve().parent / "static"
 PLUGIN_ERROR_THROTTLE_SECONDS = 60.0
+FORCE_REFRESH_RESTART_DELAY_SECONDS = 0.5
 UPDATE_MANAGER_NAME = "notifyecho"
 
 JOB_EVENT_KEYS = {
@@ -163,9 +165,6 @@ class NotifyEcho:
         }
 
     async def _handle_verify(self, web_request: Any) -> Dict[str, Any]:
-        base_url = self._validated_base_url(
-            web_request.get_str("baseUrl", self.settings["baseUrl"])
-        )
         token = web_request.get_str("token", self.settings["token"]).strip()
         workflow_id = self._validated_workflow_id(
             web_request.get_str("workflowId", "")
@@ -175,7 +174,7 @@ class NotifyEcho:
         if not workflow_id:
             raise self.server.error("A workflow ID is required.", 400)
 
-        result = await self.client.verify(base_url, token, workflow_id)
+        result = await self.client.verify(token, workflow_id)
         return {
             "valid": result.valid,
             "httpStatus": result.status_code,
@@ -189,15 +188,11 @@ class NotifyEcho:
         if event_key not in EVENT_DEFINITIONS_BY_KEY:
             raise self.server.error("Unknown event: %s" % event_key, 400)
 
-        base_url = self._validated_base_url(
-            web_request.get_str("baseUrl", self.settings["baseUrl"])
-        )
         token = web_request.get_str("token", self.settings["token"]).strip()
         if not token:
             raise self.server.error("A bearer token is required.", 400)
 
         override = dict(self.settings)
-        override["baseUrl"] = base_url
         override["token"] = token
 
         raw_workflow = web_request.get_str("workflowId", "")
@@ -246,13 +241,38 @@ class NotifyEcho:
                 400,
             )
 
-        if action == "refresh":
-            if self._update_manager_busy(manager):
+        if action in ("refresh", "force_refresh"):
+            if self._update_running or self._update_manager_busy(manager):
                 raise self.server.error("An update is already running.", 503)
             if self._is_printing():
                 raise self.server.error("Refresh refused: the printer is printing.", 503)
-            await self._refresh_update_status(manager, updater)
-            return {"started": False, "status": self._update_state()}
+
+            if action == "refresh":
+                await self._refresh_update_status(manager, updater)
+                return {
+                    "started": False,
+                    "reinstalled": False,
+                    "status": self._update_state(),
+                }
+
+            self._update_running = True
+            try:
+                reinstalled = await self._force_refresh_repo_locked(manager, updater)
+            except Exception:
+                self._update_running = False
+                raise
+
+            if reinstalled:
+                self.eventloop.create_task(
+                    self._restart_after_force_refresh(updater)
+                )
+            else:
+                self._update_running = False
+            return {
+                "started": reinstalled,
+                "reinstalled": reinstalled,
+                "status": self._update_state(),
+            }
         if action != "update":
             raise self.server.error("Unknown update action: %s" % action, 400)
 
@@ -281,6 +301,125 @@ class NotifyEcho:
                 await updater.refresh()
         else:
             await updater.refresh()
+
+    async def _force_refresh_repo_locked(self, manager: Any, updater: Any) -> bool:
+        lock = getattr(manager, "cmd_request_lock", None)
+        if lock is None:
+            reinstalled = await self._force_refresh_repo(updater)
+            await updater.refresh()
+            return reinstalled
+
+        async with lock:
+            reinstalled = await self._force_refresh_repo(updater)
+            await updater.refresh()
+            return reinstalled
+
+    async def _force_refresh_repo(self, updater: Any) -> bool:
+        path = getattr(updater, "path", None)
+        if path is None:
+            raise self.server.error(
+                "NotifyEcho's updater does not expose a repository path.", 400
+            )
+
+        try:
+            current_tag = await self._run_git(
+                path, "describe", "--tags", "--exact-match", "HEAD"
+            )
+        except Exception:
+            current_tag = ""
+        current_commit = await self._run_git(path, "rev-parse", "HEAD")
+
+        # Fetch all remotes and force-update local tags. A normal fetch will not
+        # move an existing tag that was re-pointed on the remote.
+        await self._run_git(
+            path, "fetch", "--all", "--prune", "--tags", "--force"
+        )
+
+        if not current_tag:
+            return False
+
+        try:
+            tag_commit = await self._run_git(
+                path, "rev-parse", "refs/tags/%s^{commit}" % current_tag
+            )
+        except Exception:
+            return False
+
+        if tag_commit == current_commit:
+            return False
+
+        # The installed tag now points at newer code. Moonraker's stable
+        # channel compares version strings and will not update an unchanged
+        # tag, so reset explicitly and let the caller restart Moonraker.
+        await self._run_git(path, "reset", "--hard", "refs/tags/%s" % current_tag)
+        LOGGER.info(
+            "NotifyEcho force refresh moved tag %s from %s to %s",
+            current_tag,
+            current_commit,
+            tag_commit,
+        )
+        return True
+
+    async def _run_git(self, path: Any, *args: str) -> str:
+        env = dict(os.environ)
+        env["GIT_TERMINAL_PROMPT"] = "0"
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "git",
+                "-C",
+                str(path),
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env,
+            )
+        except OSError as exc:
+            raise self.server.error("Could not run git: %s" % exc, 500)
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=120.0
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            raise self.server.error("git %s timed out." % args[0], 504)
+
+        if process.returncode != 0:
+            message = (
+                stderr.decode("utf-8", errors="replace").strip()
+                or stdout.decode("utf-8", errors="replace").strip()
+                or "git exited with %d" % process.returncode
+            )
+            raise self.server.error("git %s failed: %s" % (args[0], message), 500)
+        return stdout.decode("utf-8", errors="replace").strip()
+
+    async def _restart_after_force_refresh(self, updater: Any) -> None:
+        started_at = _utc_now()
+        try:
+            # Give the HTTP response time to reach the browser before Moonraker
+            # restarts.
+            await asyncio.sleep(FORCE_REFRESH_RESTART_DELAY_SECONDS)
+            await updater.restart_service()
+        except Exception as exc:
+            LOGGER.warning("NotifyEcho restart after force refresh failed: %s", exc)
+            self._last_update = {
+                "at": _utc_now(),
+                "startedAt": started_at,
+                "ok": False,
+                "updated": True,
+                "message": str(exc),
+            }
+        else:
+            self._last_update = {
+                "at": _utc_now(),
+                "startedAt": started_at,
+                "ok": True,
+                "updated": True,
+                "message": "Force refresh reinstalled the current tag.",
+            }
+        finally:
+            self._update_running = False
 
     async def _run_update(self, manager: Any, updater: Any) -> None:
         started_at = _utc_now()
@@ -579,9 +718,7 @@ class NotifyEcho:
             printer_info=self._printer_info(),
             extra=extra,
         )
-        result = await self.client.send(
-            settings["baseUrl"], token, workflow_id, payload
-        )
+        result = await self.client.send(token, workflow_id, payload)
 
         self._last_send = {
             "at": _utc_now(),
@@ -640,12 +777,6 @@ class NotifyEcho:
             "port": port,
             "moonrakerVersion": app_args.get("software_version") or "",
         }
-
-    def _validated_base_url(self, raw: str) -> str:
-        try:
-            return normalize_base_url(raw)
-        except SettingsError as exc:
-            raise self.server.error(str(exc), 400)
 
     def _validated_workflow_id(self, raw: str) -> str:
         try:

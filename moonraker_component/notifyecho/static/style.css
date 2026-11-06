@@ -315,6 +315,12 @@ input[type="number"]:focus {
   min-width: 0;
 }
 
+.update-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .update-version {
   margin-left: 6px;
   color: var(--muted);

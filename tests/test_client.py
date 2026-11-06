@@ -12,9 +12,11 @@ from notifyecho.client import NotifyEchoClient  # noqa: E402
 
 
 class FakeResponse:
+    """Mirrors Moonraker's ``HttpResponse`` (content / status_code)."""
+
     def __init__(self, code: int, body: bytes = b"", error: object = None) -> None:
-        self.code = code
-        self.body = body
+        self.status_code = code
+        self.content = body
         self.error = error
 
 
@@ -49,7 +51,6 @@ class VerifyTest(unittest.TestCase):
 
         result = asyncio.run(
             client.verify(
-                "https://notifyecho.com",
                 "pk_live_abc",
                 "11111111-1111-1111-1111-111111111111",
             )
@@ -69,7 +70,7 @@ class VerifyTest(unittest.TestCase):
         http = FakeHttp(FakeResponse(401, b'{"error":{"code":"invalid_api_key"}}'))
         client = NotifyEchoClient(http)
 
-        result = asyncio.run(client.verify("https://example.test", "bad", "wf"))
+        result = asyncio.run(client.verify("bad", "wf"))
 
         self.assertFalse(result.valid)
         self.assertEqual(result.status_code, 401)
@@ -79,7 +80,7 @@ class VerifyTest(unittest.TestCase):
         http = FakeHttp(FakeResponse(404, b"{}"))
         client = NotifyEchoClient(http)
 
-        result = asyncio.run(client.verify("https://example.test", "token", "wf"))
+        result = asyncio.run(client.verify("token", "wf"))
 
         self.assertFalse(result.valid)
         self.assertIn("not found", result.message)
@@ -91,7 +92,7 @@ class VerifyTest(unittest.TestCase):
 
         client = NotifyEchoClient(BrokenHttp())
 
-        result = asyncio.run(client.verify("https://example.test", "token", "wf"))
+        result = asyncio.run(client.verify("token", "wf"))
 
         self.assertFalse(result.valid)
         self.assertIn("no route", result.message)
@@ -104,7 +105,6 @@ class SendTest(unittest.TestCase):
 
         result = asyncio.run(
             client.send(
-                "https://notifyecho.com",
                 "pk_live_abc",
                 "11111111-1111-1111-1111-111111111111",
                 {"kind": "klipper.ready", "content": {"title": "Ready"}},
@@ -128,7 +128,7 @@ class SendTest(unittest.TestCase):
         client = NotifyEchoClient(http)
 
         result = asyncio.run(
-            client.send("https://example.test", "token", "wf", {"kind": "test"})
+            client.send("token", "wf", {"kind": "test"})
         )
 
         self.assertFalse(result.ok)
@@ -143,7 +143,7 @@ class SendTest(unittest.TestCase):
         client = NotifyEchoClient(BrokenHttp())
 
         result = asyncio.run(
-            client.send("https://example.test", "token", "wf", {"kind": "test"})
+            client.send("token", "wf", {"kind": "test"})
         )
 
         self.assertFalse(result.ok)
