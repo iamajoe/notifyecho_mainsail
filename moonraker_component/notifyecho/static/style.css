@@ -102,6 +102,17 @@ main {
   font-weight: 600;
 }
 
+.input-with-action {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.input-with-action input {
+  flex: 1;
+  min-width: 0;
+}
+
 input[type="text"],
 input[type="url"],
 input[type="password"],

@@ -15,7 +15,7 @@ class StaticAssetsTest(unittest.TestCase):
         self.assertIn("/server/notifyecho/static/style.css", html)
         self.assertIn('id="events-list"', html)
         self.assertIn('id="save"', html)
-        self.assertIn('id="verify-all"', html)
+        self.assertIn('id="verify-default"', html)
         self.assertIn('id="update-run"', html)
         self.assertIn('id="update-refresh"', html)
         self.assertIn('id="update-force-refresh"', html)

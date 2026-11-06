@@ -52,10 +52,14 @@
             <span>Advanced mode</span>
           </label>
 
-          <label class="field">
+          <div class="field">
             <span>Default workflow ID</span>
-            <input id="default-workflow" type="text" spellcheck="false" placeholder="00000000-0000-0000-0000-000000000000" />
-          </label>
+            <div class="input-with-action">
+              <input id="default-workflow" type="text" spellcheck="false" placeholder="00000000-0000-0000-0000-000000000000" />
+              <button id="verify-default" class="button small" type="button" disabled>Verify</button>
+            </div>
+            <span id="verify-default-status" class="inline-status" role="status"></span>
+          </div>
         </section>
 
         <section class="card">
@@ -64,7 +68,6 @@
               <h2>Events</h2>
               <p class="hint">Every event is enabled by default. Disable any event you do not want sent.</p>
             </div>
-            <button id="verify-all" class="button" type="button">Verify all</button>
           </div>
 
           <div id="events-list" class="events"></div>
@@ -91,7 +94,7 @@
               <p id="update-detail" class="event-description"></p>
             </div>
             <div class="update-actions">
-              <button id="update-force-refresh" class="button" type="button" title="Re-fetch all refs and tags; reinstall if the installed tag moved.">Force refresh</button>
+              <button id="update-force-refresh" class="button" type="button" hidden title="Re-fetch all refs and tags; reinstall if the installed tag moved.">Force refresh</button>
               <button id="update-run" class="button primary" type="button" disabled>Update</button>
             </div>
           </div>

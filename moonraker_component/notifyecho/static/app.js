@@ -21,7 +21,8 @@ document.addEventListener("DOMContentLoaded", function () {
   els.advancedMode = document.getElementById("advanced-mode");
   els.eventsList = document.getElementById("events-list");
   els.save = document.getElementById("save");
-  els.verifyAll = document.getElementById("verify-all");
+  els.verifyDefault = document.getElementById("verify-default");
+  els.verifyDefaultStatus = document.getElementById("verify-default-status");
   els.status = document.getElementById("status");
   els.lastSend = document.getElementById("last-send");
   els.back = document.getElementById("back");
@@ -42,16 +43,21 @@ function bindStaticEvents() {
   });
   els.defaultWorkflow.addEventListener("input", function () {
     state.settings.defaultWorkflowId = els.defaultWorkflow.value.trim();
+    syncDefaultWorkflowControls();
   });
   els.advancedMode.addEventListener("change", function () {
     state.settings.advancedMode = els.advancedMode.checked;
+    syncForceRefreshVisibility();
     renderEvents();
   });
   els.save.addEventListener("click", function () {
     void saveSettings();
   });
-  els.verifyAll.addEventListener("click", function () {
-    void verifyAll();
+  els.verifyDefault.addEventListener("click", function () {
+    void verifyWorkflow(
+      (state.settings.defaultWorkflowId || "").trim(),
+      els.verifyDefaultStatus
+    );
   });
   els.back.addEventListener("click", function () {
     if (window.history.length > 1) {
@@ -93,8 +99,18 @@ function applyData(data) {
   els.defaultWorkflow.value = state.settings.defaultWorkflowId || "";
   els.advancedMode.checked = Boolean(state.settings.advancedMode);
 
+  syncDefaultWorkflowControls();
+  syncForceRefreshVisibility();
   renderEvents();
   renderLastSend();
+}
+
+function syncDefaultWorkflowControls() {
+  els.verifyDefault.disabled = !(state.settings.defaultWorkflowId || "").trim();
+}
+
+function syncForceRefreshVisibility() {
+  els.updateForceRefresh.hidden = !state.settings.advancedMode;
 }
 
 function renderEvents() {
@@ -147,13 +163,18 @@ function renderEvents() {
     const actions = document.createElement("div");
     actions.className = "event-actions";
 
-    const verifyButton = document.createElement("button");
-    verifyButton.type = "button";
-    verifyButton.className = "button small";
-    verifyButton.textContent = "Verify";
-    verifyButton.addEventListener("click", function () {
-      void verifyEvent(definition.key, status);
-    });
+    let verifyButton = null;
+    if (state.settings.advancedMode) {
+      verifyButton = document.createElement("button");
+      verifyButton.type = "button";
+      verifyButton.className = "button small";
+      verifyButton.textContent = "Verify";
+      verifyButton.disabled = !(entry.workflowId || "").trim();
+      verifyButton.addEventListener("click", function () {
+        void verifyEvent(definition.key, status);
+      });
+      actions.appendChild(verifyButton);
+    }
 
     const testButton = document.createElement("button");
     testButton.type = "button";
@@ -163,7 +184,6 @@ function renderEvents() {
       void sendTest(definition.key, status);
     });
 
-    actions.appendChild(verifyButton);
     actions.appendChild(testButton);
 
     const details = document.createElement("div");
@@ -196,6 +216,9 @@ function renderEvents() {
         : "Falls back to the default workflow ID";
       workflowInput.addEventListener("input", function () {
         entry.workflowId = workflowInput.value.trim();
+        if (verifyButton) {
+          verifyButton.disabled = !entry.workflowId;
+        }
       });
       workflowLabel.appendChild(workflowInput);
       details.appendChild(workflowLabel);
@@ -235,6 +258,10 @@ async function saveSettings() {
 
 async function verifyEvent(eventKey, inlineStatus) {
   const workflowId = resolveWorkflow(eventKey);
+  await verifyWorkflow(workflowId, inlineStatus);
+}
+
+async function verifyWorkflow(workflowId, inlineStatus) {
   if (!workflowId) {
     setInline(inlineStatus, "Set a workflow ID first.", "error");
     return;
@@ -291,54 +318,6 @@ async function sendTest(eventKey, inlineStatus) {
     }
   } catch (error) {
     setInline(inlineStatus, "✗ " + error.message, "error");
-  }
-}
-
-async function verifyAll() {
-  const workflows = [];
-  state.events.forEach(function (definition) {
-    const entry = state.settings.events[definition.key];
-    if (!entry || !entry.enabled) {
-      return;
-    }
-    const workflowId = resolveWorkflow(definition.key);
-    if (workflowId && workflows.indexOf(workflowId) === -1) {
-      workflows.push(workflowId);
-    }
-  });
-
-  if (workflows.length === 0) {
-    setStatus("No enabled event has a workflow ID.", "error");
-    return;
-  }
-
-  setStatus("Verifying " + workflows.length + " workflow(s)…", "busy");
-  let valid = 0;
-  const failures = [];
-
-  for (const workflowId of workflows) {
-    try {
-      const result = await api("/verify", {
-        method: "POST",
-        body: JSON.stringify({
-          token: state.settings.token,
-          workflowId: workflowId,
-        }),
-      });
-      if (result.valid) {
-        valid += 1;
-      } else {
-        failures.push(workflowId + ": " + result.message);
-      }
-    } catch (error) {
-      failures.push(workflowId + ": " + error.message);
-    }
-  }
-
-  if (failures.length === 0) {
-    setStatus("All " + valid + " workflow(s) verified.", "ok");
-  } else {
-    setStatus("Verified " + valid + " of " + workflows.length + ". " + failures.join(" · "), "error");
   }
 }
 

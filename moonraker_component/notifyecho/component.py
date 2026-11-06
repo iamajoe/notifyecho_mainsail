@@ -770,11 +770,11 @@ class NotifyEcho:
             return {}
 
     def _printer_info(self) -> Dict[str, Any]:
-        hostname, port = self.server.get_host_info()
+        host_info = self.server.get_host_info()
         app_args = self.server.get_app_args()
         return {
-            "hostname": hostname,
-            "port": port,
+            "hostname": host_info.get("hostname", ""),
+            "port": host_info.get("port", 0),
             "moonrakerVersion": app_args.get("software_version") or "",
         }
 

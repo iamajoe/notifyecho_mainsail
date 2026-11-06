@@ -208,8 +208,13 @@ class FakeServer:
     def register_event_handler(self, event: str, callback: Any) -> None:
         self.handlers[event] = callback
 
-    def get_host_info(self) -> tuple:
-        return ("voron", 7125)
+    def get_host_info(self) -> Dict[str, Any]:
+        return {
+            "hostname": "voron",
+            "address": "0.0.0.0",
+            "port": 7125,
+            "ssl_port": 7130,
+        }
 
     def get_app_args(self) -> Dict[str, Any]:
         return {"software_version": "v0.0.0-test"}
@@ -404,10 +409,40 @@ class ComponentTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertTrue(result["ok"])
+        payload = self.server.http.last_post["body"]
+        self.assertEqual(payload["content"]["data"]["filename"], "notifyecho-test.gcode")
+        self.assertEqual(payload["content"]["data"]["printer"], "voron")
         self.assertEqual(
-            self.server.http.last_post["body"]["content"]["data"]["filename"],
-            "notifyecho-test.gcode",
+            payload["metadata"]["printer"],
+            {
+                "hostname": "voron",
+                "port": 7125,
+                "moonrakerVersion": "v0.0.0-test",
+            },
         )
+
+    def test_printer_info_reads_moonraker_host_dict(self) -> None:
+        self.assertEqual(
+            self.component._printer_info(),
+            {
+                "hostname": "voron",
+                "port": 7125,
+                "moonrakerVersion": "v0.0.0-test",
+            },
+        )
+
+    def test_printer_info_tolerates_missing_host_fields(self) -> None:
+        with patch.object(
+            self.server, "get_host_info", return_value={"address": "0.0.0.0"}
+        ):
+            self.assertEqual(
+                self.component._printer_info(),
+                {
+                    "hostname": "",
+                    "port": 0,
+                    "moonrakerVersion": "v0.0.0-test",
+                },
+            )
 
     async def test_static_endpoints_return_assets(self) -> None:
         ui = await self.component._handle_ui(FakeWebRequest(RequestType.GET, {}))
