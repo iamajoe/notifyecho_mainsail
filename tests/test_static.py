@@ -16,13 +16,22 @@ class StaticAssetsTest(unittest.TestCase):
         self.assertIn('id="events-list"', html)
         self.assertIn('id="save"', html)
         self.assertIn('id="verify-all"', html)
+        self.assertIn('id="update-run"', html)
+        self.assertIn('id="update-refresh"', html)
 
     def test_app_calls_component_endpoints(self) -> None:
         script = (STATIC / "app.js").read_text(encoding="utf-8")
 
-        for endpoint in ("/settings", "/verify", "/test"):
+        for endpoint in ("/settings", "/verify", "/test", "/update"):
             with self.subTest(endpoint=endpoint):
                 self.assertIn(endpoint, script)
+
+    def test_app_exposes_update_controls(self) -> None:
+        script = (STATIC / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("refreshUpdateStatus", script)
+        self.assertIn("runUpdate", script)
+        self.assertIn("updatePoll", script)
 
     def test_app_exposes_advanced_routing_and_progress(self) -> None:
         script = (STATIC / "app.js").read_text(encoding="utf-8")

@@ -76,6 +76,31 @@
         </section>
 
         <section class="card">
+          <div class="section-head">
+            <div>
+              <h2>Updates</h2>
+              <p class="hint">
+                Keep NotifyEcho current. Updates are handled by Moonraker's update manager and
+                restart Moonraker when complete.
+              </p>
+            </div>
+            <button id="update-refresh" class="button small" type="button">Check for updates</button>
+          </div>
+
+          <div class="update-row">
+            <div class="update-main">
+              <div class="event-title">
+                NotifyEcho
+                <span id="update-version" class="update-version"></span>
+              </div>
+              <p id="update-detail" class="event-description"></p>
+            </div>
+            <button id="update-run" class="button primary" type="button" disabled>Update</button>
+          </div>
+          <p id="update-status" class="hint update-status" role="status"></p>
+        </section>
+
+        <section class="card">
           <div class="actions">
             <button id="save" class="button primary" type="button">Save</button>
             <span id="status" class="status" role="status"></span>

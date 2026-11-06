@@ -206,7 +206,51 @@ managed_services: moonraker
 EOF
     info "Added [update_manager notifyecho] to $CONFIG_FILE"
   else
-    info "[update_manager notifyecho] already present in $CONFIG_FILE"
+    python3 - "$CONFIG_FILE" "$INSTALL_DIR" "$REPO_URL" "$BRANCH" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+install_dir, repo_url, branch = sys.argv[2:5]
+header = "[update_manager notifyecho]"
+managed = {
+    "type": "git_repo",
+    "channel": "dev",
+    "path": install_dir,
+    "origin": repo_url,
+    "primary_branch": branch,
+    "managed_services": "moonraker",
+}
+
+lines = path.read_text(encoding="utf-8").splitlines()
+try:
+    start = next(index for index, line in enumerate(lines) if line.strip() == header)
+except StopIteration:
+    raise SystemExit(0)
+
+end = len(lines)
+for index in range(start + 1, len(lines)):
+    stripped = lines[index].strip()
+    if stripped.startswith("[") and stripped.endswith("]"):
+        end = index
+        break
+
+extra = []
+for line in lines[start + 1:end]:
+    stripped = line.strip()
+    if not stripped:
+        continue
+    key = stripped.split(":", 1)[0].strip()
+    if key not in managed:
+        extra.append(line)
+
+section = [header]
+section.extend("%s: %s" % (key, value) for key, value in managed.items())
+section.extend(extra)
+lines[start:end] = section
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+    info "Updated [update_manager notifyecho] in $CONFIG_FILE"
   fi
 else
   warn "No [update_manager] section found; skipping update-manager registration."

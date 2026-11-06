@@ -28,6 +28,7 @@ DB_NAMESPACE = "notifyecho"
 DB_KEY = "settings"
 STATIC_DIR = pathlib.Path(__file__).resolve().parent / "static"
 PLUGIN_ERROR_THROTTLE_SECONDS = 60.0
+UPDATE_MANAGER_NAME = "notifyecho"
 
 JOB_EVENT_KEYS = {
     "started": "print_started",
@@ -53,6 +54,8 @@ class NotifyEcho:
         self.progress = ProgressTracker(self.settings["progressMilestones"])
         self._last_send: Optional[Dict[str, Any]] = None
         self._last_plugin_error_at = 0.0
+        self._last_update: Optional[Dict[str, Any]] = None
+        self._update_running = False
 
         self._progress_subscribed = False
         self._progress_synced = False
@@ -103,6 +106,11 @@ class NotifyEcho:
         self.server.register_endpoint(
             "/server/notifyecho/test", RequestType.POST,
             self._handle_test,
+        )
+        self.server.register_endpoint(
+            "/server/notifyecho/update",
+            RequestType.GET | RequestType.POST,
+            self._handle_update,
         )
 
     def _register_handlers(self) -> None:
@@ -223,6 +231,188 @@ class NotifyEcho:
             "httpStatus": result.status_code,
             "message": result.message,
         }
+
+    async def _handle_update(self, web_request: Any) -> Dict[str, Any]:
+        if web_request.get_request_type() == RequestType.GET:
+            return self._update_state()
+
+        action = web_request.get_str("action", "update").strip().lower()
+        manager = self._update_manager()
+        updater = self._updater()
+        if manager is None or updater is None:
+            raise self.server.error(
+                "Moonraker's update manager is not tracking NotifyEcho. "
+                "Re-run install.sh to register it.",
+                400,
+            )
+
+        if action == "refresh":
+            if self._update_manager_busy(manager):
+                raise self.server.error("An update is already running.", 503)
+            if self._is_printing():
+                raise self.server.error("Refresh refused: the printer is printing.", 503)
+            await self._refresh_update_status(manager, updater)
+            return {"started": False, "status": self._update_state()}
+        if action != "update":
+            raise self.server.error("Unknown update action: %s" % action, 400)
+
+        if self._update_running or self._update_manager_busy(manager):
+            raise self.server.error("A NotifyEcho update is already running.", 503)
+        if self._is_printing():
+            raise self.server.error("Update refused: the printer is printing.", 503)
+
+        self._update_running = True
+        self.eventloop.create_task(self._run_update(manager, updater))
+        return {"started": True, "status": self._update_state()}
+
+    async def _refresh_update_status(self, manager: Any, updater: Any) -> None:
+        lock = getattr(manager, "cmd_request_lock", None)
+        if lock is not None:
+            async with lock:
+                await updater.refresh()
+        else:
+            await updater.refresh()
+
+    async def _run_update(self, manager: Any, updater: Any) -> None:
+        started_at = _utc_now()
+        try:
+            lock = getattr(manager, "cmd_request_lock", None)
+            if lock is not None:
+                async with lock:
+                    updated = await updater.update()
+            else:
+                updated = await updater.update()
+        except Exception as exc:
+            LOGGER.warning("NotifyEcho update failed: %s", exc)
+            self._last_update = {
+                "at": _utc_now(),
+                "startedAt": started_at,
+                "ok": False,
+                "updated": False,
+                "message": str(exc),
+            }
+        else:
+            self._last_update = {
+                "at": _utc_now(),
+                "startedAt": started_at,
+                "ok": True,
+                "updated": bool(updated),
+                "message": "Update complete." if updated else "Already up to date.",
+            }
+        finally:
+            self._update_running = False
+
+    def _update_state(self) -> Dict[str, Any]:
+        manager = self._update_manager()
+        if manager is None:
+            return {
+                "available": False,
+                "name": UPDATE_MANAGER_NAME,
+                "busy": False,
+                "updatable": False,
+                "message": "Moonraker's update manager is not enabled.",
+            }
+
+        updater = self._updater()
+        if updater is None:
+            return {
+                "available": False,
+                "name": UPDATE_MANAGER_NAME,
+                "busy": False,
+                "updatable": False,
+                "message": (
+                    "NotifyEcho is not registered with Moonraker's update manager. "
+                    "Re-run install.sh to register it."
+                ),
+            }
+
+        try:
+            info = updater.get_update_status() or {}
+        except Exception as exc:
+            LOGGER.debug("NotifyEcho could not read update status: %s", exc)
+            return {
+                "available": True,
+                "name": UPDATE_MANAGER_NAME,
+                "busy": self._update_running,
+                "updatable": False,
+                "message": "Could not read update status: %s" % exc,
+            }
+
+        version = str(info.get("version") or "")
+        remote_version = str(info.get("remote_version") or "")
+        current_hash = str(info.get("current_hash") or "")
+        remote_hash = str(info.get("remote_hash") or "")
+        commits_behind = info.get("commits_behind_count")
+        if not isinstance(commits_behind, int):
+            commits_behind = len(info.get("commits_behind") or [])
+
+        if current_hash and remote_hash:
+            updatable = current_hash != remote_hash
+        elif commits_behind:
+            updatable = True
+        else:
+            updatable = bool(
+                version and remote_version and version != remote_version
+            )
+        valid = bool(info.get("is_valid", True))
+        if not valid:
+            updatable = False
+
+        return {
+            "available": True,
+            "name": str(info.get("name") or UPDATE_MANAGER_NAME),
+            "version": version,
+            "remoteVersion": remote_version,
+            "fullVersion": str(info.get("full_version_string") or ""),
+            "branch": str(info.get("branch") or ""),
+            "channel": str(info.get("channel") or ""),
+            "commitsBehind": commits_behind,
+            "updatable": updatable,
+            "valid": valid,
+            "busy": self._update_running or self._update_manager_busy(manager),
+            "warnings": list(info.get("warnings") or []),
+            "anomalies": list(info.get("anomalies") or []),
+            "lastUpdate": self._last_update,
+        }
+
+    def _update_manager(self) -> Any:
+        return self.server.lookup_component("update_manager", None)
+
+    def _update_manager_busy(self, manager: Any) -> bool:
+        cmd_helper = getattr(manager, "cmd_helper", None)
+        is_busy = getattr(cmd_helper, "is_update_busy", None)
+        if not callable(is_busy):
+            return False
+        try:
+            return bool(is_busy())
+        except Exception:
+            return False
+
+    def _updater(self) -> Any:
+        manager = self._update_manager()
+        if manager is None:
+            return None
+        get_updaters = getattr(manager, "get_updaters", None)
+        if callable(get_updaters):
+            try:
+                updaters = get_updaters()
+            except Exception:
+                return None
+        else:
+            updaters = getattr(manager, "updaters", None)
+        if not isinstance(updaters, dict):
+            return None
+        return updaters.get(UPDATE_MANAGER_NAME)
+
+    def _is_printing(self) -> bool:
+        klippy = self.server.lookup_component("klippy_connection", None)
+        is_printing = getattr(klippy, "is_printing", None)
+        if not callable(is_printing):
+            return False
+        try:
+            return bool(is_printing())
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     # Moonraker events

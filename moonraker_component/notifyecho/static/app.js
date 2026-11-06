@@ -9,6 +9,8 @@ const state = {
   events: [],
   lastSend: null,
   milestonesText: "",
+  update: null,
+  updatePoll: null,
 };
 
 const els = {};
@@ -24,6 +26,11 @@ document.addEventListener("DOMContentLoaded", function () {
   els.status = document.getElementById("status");
   els.lastSend = document.getElementById("last-send");
   els.back = document.getElementById("back");
+  els.updateRefresh = document.getElementById("update-refresh");
+  els.updateRun = document.getElementById("update-run");
+  els.updateVersion = document.getElementById("update-version");
+  els.updateDetail = document.getElementById("update-detail");
+  els.updateStatus = document.getElementById("update-status");
 
   bindStaticEvents();
   void load();
@@ -56,6 +63,12 @@ function bindStaticEvents() {
       window.location.href = "/";
     }
   });
+  els.updateRefresh.addEventListener("click", function () {
+    void refreshUpdateStatus();
+  });
+  els.updateRun.addEventListener("click", function () {
+    void runUpdate();
+  });
 }
 
 async function load() {
@@ -67,6 +80,7 @@ async function load() {
   } catch (error) {
     setStatus(error.message, "error");
   }
+  await loadUpdateStatus();
 }
 
 function applyData(data) {
@@ -340,6 +354,162 @@ function resolveWorkflow(eventKey) {
     }
   }
   return (state.settings.defaultWorkflowId || "").trim();
+}
+
+async function loadUpdateStatus() {
+  try {
+    const data = await api("/update");
+    state.update = data;
+    renderUpdate();
+  } catch (error) {
+    setUpdateStatus("Could not read update status: " + error.message, "error");
+  }
+}
+
+async function refreshUpdateStatus() {
+  els.updateRefresh.disabled = true;
+  setUpdateStatus("Checking for updates…", "busy");
+  try {
+    const result = await api("/update", {
+      method: "POST",
+      body: JSON.stringify({ action: "refresh" }),
+    });
+    state.update = result.status || state.update;
+    renderUpdate();
+    if (state.update && state.update.updatable) {
+      setUpdateStatus("An update is available.", "ok");
+    } else if (state.update && state.update.available) {
+      setUpdateStatus("NotifyEcho is up to date.", "ok");
+    } else {
+      setUpdateStatus((state.update && state.update.message) || "", "error");
+    }
+  } catch (error) {
+    setUpdateStatus("Could not check for updates: " + error.message, "error");
+  } finally {
+    els.updateRefresh.disabled = false;
+  }
+}
+
+async function runUpdate() {
+  if (!state.update || !state.update.updatable) {
+    return;
+  }
+
+  els.updateRun.disabled = true;
+  setUpdateStatus("Starting update…", "busy");
+  try {
+    const result = await api("/update", {
+      method: "POST",
+      body: JSON.stringify({ action: "update" }),
+    });
+    state.update = result.status || state.update;
+    renderUpdate();
+    setUpdateStatus(
+      "Updating. Moonraker restarts when the update finishes, so this page may briefly disconnect.",
+      "busy"
+    );
+    startUpdatePolling();
+  } catch (error) {
+    setUpdateStatus("Could not start the update: " + error.message, "error");
+    renderUpdate();
+  }
+}
+
+function startUpdatePolling() {
+  stopUpdatePolling();
+  let attempts = 0;
+  state.updatePoll = window.setInterval(async function () {
+    attempts += 1;
+    try {
+      const data = await api("/update");
+      state.update = data;
+      renderUpdate();
+      if (data.lastUpdate && data.lastUpdate.ok === false) {
+        stopUpdatePolling();
+        setUpdateStatus("Update failed: " + data.lastUpdate.message, "error");
+      } else if (data.available && !data.busy && !data.updatable) {
+        stopUpdatePolling();
+        setUpdateStatus("Update complete.", "ok");
+      } else {
+        setUpdateStatus(
+          "Updating… Moonraker will restart when the update finishes.",
+          "busy"
+        );
+      }
+    } catch (error) {
+      setUpdateStatus("Waiting for Moonraker to restart…", "busy");
+    }
+
+    if (attempts >= 240) {
+      stopUpdatePolling();
+      setUpdateStatus(
+        "Could not confirm the update finished. Reload the page to check.",
+        "error"
+      );
+    }
+  }, 5000);
+}
+
+function stopUpdatePolling() {
+  if (state.updatePoll !== null) {
+    window.clearInterval(state.updatePoll);
+    state.updatePoll = null;
+  }
+}
+
+function renderUpdate() {
+  const update = state.update;
+  if (!update) {
+    return;
+  }
+
+  if (!update.available) {
+    els.updateVersion.textContent = "";
+    els.updateDetail.textContent = update.message || "Updates are not available.";
+    els.updateRun.disabled = true;
+    return;
+  }
+
+  els.updateVersion.textContent = update.version ? "· " + update.version : "";
+  els.updateDetail.textContent = updateDetail(update);
+  els.updateRun.disabled = Boolean(update.busy) || !update.updatable;
+  els.updateRun.textContent = update.busy ? "Updating…" : "Update";
+
+  if (!update.valid && update.warnings && update.warnings.length) {
+    setUpdateStatus(update.warnings.join(" · "), "error");
+  }
+}
+
+function updateDetail(update) {
+  const parts = [];
+  if (!update.valid) {
+    parts.push("This install cannot be updated automatically.");
+  } else if (update.updatable) {
+    if (update.version && update.remoteVersion) {
+      parts.push(update.version + " → " + update.remoteVersion);
+    } else {
+      parts.push("An update is available.");
+    }
+    if (update.commitsBehind) {
+      parts.push(
+        update.commitsBehind +
+          " new commit" +
+          (update.commitsBehind === 1 ? "" : "s")
+      );
+    }
+  } else {
+    parts.push("Up to date.");
+  }
+
+  if (update.channel) {
+    parts.push("Channel: " + update.channel + ".");
+  }
+  return parts.join(" ");
+}
+
+function setUpdateStatus(message, kind) {
+  els.updateStatus.textContent = message || "";
+  els.updateStatus.className = "hint update-status" + (kind ? " is-" + kind : "");
 }
 
 function parseMilestones(text) {

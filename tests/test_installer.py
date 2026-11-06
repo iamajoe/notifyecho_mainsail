@@ -95,6 +95,8 @@ class InstallerTest(unittest.TestCase):
         config = self.config.read_text(encoding="utf-8")
         self.assertEqual(config.count("[notifyecho]"), 1)
         self.assertEqual(config.count("[update_manager notifyecho]"), 1)
+        self.assertIn("managed_services: moonraker", config)
+        self.assertNotIn("system_dependencies", config)
 
         navi = json.loads(self.navi.read_text(encoding="utf-8"))
         entries = [item for item in navi if item.get("href") == "/server/notifyecho/ui"]
@@ -119,6 +121,18 @@ class InstallerTest(unittest.TestCase):
             [item for item in navi if item.get("href") == "/server/notifyecho/ui"],
             [],
         )
+
+    def test_install_refreshes_existing_update_manager_section(self) -> None:
+        self._install()
+        config = self.config.read_text(encoding="utf-8")
+        config = config.replace("managed_services: moonraker\n", "")
+        self.config.write_text(config, encoding="utf-8")
+
+        self._install()
+
+        config = self.config.read_text(encoding="utf-8")
+        self.assertEqual(config.count("[update_manager notifyecho]"), 1)
+        self.assertIn("managed_services: moonraker", config)
 
 
 if __name__ == "__main__":

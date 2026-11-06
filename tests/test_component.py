@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import enum
 import pathlib
 import sys
@@ -86,9 +87,62 @@ class FakeHttp:
 class FakeKlippy:
     def __init__(self, ready: bool = False) -> None:
         self.ready = ready
+        self.printing = False
 
     def is_ready(self) -> bool:
         return self.ready
+
+    def is_printing(self) -> bool:
+        return self.printing
+
+
+class FakeUpdater:
+    def __init__(self, status: Dict[str, Any] = None) -> None:
+        self.status = status or {
+            "name": "notifyecho",
+            "version": "v0.1.0",
+            "remote_version": "v0.1.1",
+            "current_hash": "aaaa",
+            "remote_hash": "bbbb",
+            "commits_behind_count": 1,
+            "is_valid": True,
+            "channel": "dev",
+            "warnings": [],
+            "anomalies": [],
+        }
+        self.refreshed = False
+        self.updated = False
+        self.update_result = True
+        self.update_error = None
+
+    def get_update_status(self) -> Dict[str, Any]:
+        return dict(self.status)
+
+    async def refresh(self) -> None:
+        self.refreshed = True
+        self.status["current_hash"] = "bbbb"
+        self.status["remote_hash"] = "bbbb"
+        self.status["commits_behind_count"] = 0
+        self.status["version"] = self.status["remote_version"]
+
+    async def update(self) -> bool:
+        if self.update_error is not None:
+            raise self.update_error
+        self.updated = True
+        return self.update_result
+
+
+class FakeUpdateManager:
+    def __init__(self, updater: FakeUpdater = None) -> None:
+        self.updaters = {"notifyecho": updater or FakeUpdater()}
+        self.cmd_request_lock = asyncio.Lock()
+        self.busy = False
+        self.cmd_helper = types.SimpleNamespace(
+            is_update_busy=lambda: self.busy
+        )
+
+    def get_updaters(self) -> Dict[str, FakeUpdater]:
+        return self.updaters
 
 
 class FakeJobState:
@@ -118,6 +172,7 @@ class FakeServer:
         self.klippy = FakeKlippy()
         self.job_state = FakeJobState()
         self.klippy_apis = FakeKlippyApis()
+        self.update_manager = None
         self.endpoints: List[Any] = []
         self.handlers: Dict[str, Any] = {}
 
@@ -131,6 +186,7 @@ class FakeServer:
             "klippy_connection": self.klippy,
             "job_state": self.job_state,
             "klippy_apis": self.klippy_apis,
+            "update_manager": self.update_manager,
         }
         if name in components:
             return components[name]
@@ -203,6 +259,7 @@ class ComponentTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(paths), len(set(paths)))
         self.assertIn("/server/notifyecho/settings", paths)
+        self.assertIn("/server/notifyecho/update", paths)
         self.assertIn("/server/notifyecho/ui", paths)
 
     async def test_get_settings(self) -> None:
@@ -358,6 +415,91 @@ class ComponentTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn("NotifyEcho", ui)
         self.assertIn("/settings", script)
         self.assertIn(".event-row", styles)
+
+    async def test_update_status_reports_plugin_state(self) -> None:
+        self.server.update_manager = FakeUpdateManager()
+
+        result = await self.component._handle_update(
+            FakeWebRequest(RequestType.GET, {})
+        )
+
+        self.assertTrue(result["available"])
+        self.assertTrue(result["updatable"])
+        self.assertEqual(result["commitsBehind"], 1)
+
+    async def test_update_status_without_update_manager(self) -> None:
+        result = await self.component._handle_update(
+            FakeWebRequest(RequestType.GET, {})
+        )
+
+        self.assertFalse(result["available"])
+        self.assertIn("not enabled", result["message"])
+
+    async def test_update_refresh_reports_new_state(self) -> None:
+        updater = FakeUpdater()
+        self.server.update_manager = FakeUpdateManager(updater)
+
+        result = await self.component._handle_update(
+            FakeWebRequest(RequestType.POST, {"action": "refresh"})
+        )
+
+        self.assertFalse(result["started"])
+        self.assertTrue(updater.refreshed)
+        self.assertFalse(result["status"]["updatable"])
+        self.assertEqual(result["status"]["version"], "v0.1.1")
+
+    async def test_update_starts_background_task(self) -> None:
+        updater = FakeUpdater()
+        self.server.update_manager = FakeUpdateManager(updater)
+
+        result = await self.component._handle_update(
+            FakeWebRequest(RequestType.POST, {"action": "update"})
+        )
+
+        self.assertTrue(result["started"])
+        self.assertTrue(result["status"]["busy"])
+        await _run_next_task(self.server)
+        self.assertTrue(updater.updated)
+        self.assertFalse(self.component._update_running)
+        self.assertTrue(self.component._last_update["ok"])
+
+    async def test_update_records_failure(self) -> None:
+        updater = FakeUpdater()
+        updater.update_error = RuntimeError("git failed")
+        self.server.update_manager = FakeUpdateManager(updater)
+
+        await self.component._handle_update(
+            FakeWebRequest(RequestType.POST, {"action": "update"})
+        )
+        await _run_next_task(self.server)
+
+        self.assertFalse(self.component._last_update["ok"])
+        self.assertIn("git failed", self.component._last_update["message"])
+
+    async def test_update_refused_while_printing(self) -> None:
+        self.server.klippy.printing = True
+        self.server.update_manager = FakeUpdateManager()
+
+        with self.assertRaises(ServerError):
+            await self.component._handle_update(
+                FakeWebRequest(RequestType.POST, {"action": "update"})
+            )
+
+        self.assertEqual(self.server.eventloop.tasks, [])
+
+    async def test_update_rejects_unknown_action(self) -> None:
+        self.server.update_manager = FakeUpdateManager()
+
+        with self.assertRaises(ServerError):
+            await self.component._handle_update(
+                FakeWebRequest(RequestType.POST, {"action": "nope"})
+            )
+
+    async def test_update_requires_update_manager(self) -> None:
+        with self.assertRaises(ServerError):
+            await self.component._handle_update(
+                FakeWebRequest(RequestType.POST, {"action": "update"})
+            )
 
     async def test_test_endpoint_rejects_unknown_event(self) -> None:
         with self.assertRaises(ServerError):

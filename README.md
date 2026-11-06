@@ -61,6 +61,8 @@ UI.
    - Default workflow ID
 4. Press **Verify** to check the token + workflow combination.
 5. Press **Send test** to send a real test event.
+6. Use **Check for updates** / **Update** in the Updates card to keep the
+   plugin current (see [Update](#update)).
 
 ### Routing modes
 
@@ -155,7 +157,12 @@ Workflows can render the event data with `{{content.data.*}}` or
 ## Update
 
 Updates are managed by Moonraker's update manager (`channel: dev`). The
-component restarts Moonraker after an update.
+NotifyEcho settings page has an **Updates** card that shows the installed and
+remote versions, whether an update is available, and an **Update** button. This
+is the same update path Mainsail uses under **Machine → Update Manager**.
+
+NotifyEcho has no runtime dependencies beyond Moonraker and the Python standard
+library. Updating only pulls the repository and restarts Moonraker.
 
 ## Uninstall
 
